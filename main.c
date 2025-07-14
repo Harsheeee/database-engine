@@ -33,7 +33,7 @@ int main()
         free(table);
         return EXIT_FAILURE;
     }
-    
+    wal_recover(table);
     printf("Database opened successfully.\n");
     printf("Data file: student_data.db\n");
     printf("Index file: student_index.db\n");

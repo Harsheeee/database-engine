@@ -6,6 +6,7 @@
 #include "page.h"
 #include "table.h"
 #include "btree.h"
+#include "wal.h"
 
 int set_bit(uint8_t *bitmap, int i);
 int check_bit(uint8_t *bitmap, int i);
@@ -184,7 +185,7 @@ error:
     return 0;
 }
 
-void find_empty_row(Table *table, Page *page, int page_num)
+bool find_empty_row(Table *table, Page *page, int page_num)
 {
     for (int i=0;i<rows_per_page;i++)
     {
@@ -195,13 +196,13 @@ void find_empty_row(Table *table, Page *page, int page_num)
             if (!new_row)
             {
                 printf("Memory allocation failed for new row.\n");
-                return;
+                return false;
             }
 
             if (insert_row(new_row) == -1)
             {
                 free(new_row);
-                return;
+                return false;
             }
 
             // Check if ID already exists in B-Tree
@@ -210,14 +211,16 @@ void find_empty_row(Table *table, Page *page, int page_num)
             if (btree_find(&table->btree_meta, new_row->ID, &existing_page, &existing_slot)) {
                 printf("Error: ID %d already exists in database.\n", new_row->ID);
                 free(new_row);
-                return;
+                return false;
             }
+            Page before, after;
+            memcpy(&before, page, sizeof(Page));
             
             // Insert into B-Tree index first
             if (!btree_insert(&table->btree_meta, new_row->ID, page_num, i)) {
                 printf("Error: Failed to insert into B-Tree index.\n");
                 free(new_row);
-                return;
+                return false;
             }
             
             // Only after successful B-Tree insertion, update the page
@@ -229,20 +232,25 @@ void find_empty_row(Table *table, Page *page, int page_num)
                 btree_delete(&table->btree_meta, new_row->ID);
                 memset(&page->rows[i], 0, sizeof(Row));  // Clear the row data
                 free(new_row);
-                return;
+                return false;
             }
             free(new_row);  // Free the temporary row since we copied the data
             page->num_rows++;
+            memcpy(&after, page, sizeof(Page));
+            
+            // Log the change in WAL
+            log_write(current_tx_id, page_num, &before, &after);
+            printf("Written log for transaction id %d\n", current_tx_id);
             
             // Save page to disk immediately
             table_write_page(table, page_num, page);
             
-            return;
+            return true;
         }
         else if (bit_status == -1)
         {
             printf("Error checking bitmap at index %d.\n", i);
-            return;
+            return false;
         }
     }
     // for (int i = 0; i < rows_per_page; i++)
@@ -271,7 +279,7 @@ void find_empty_row(Table *table, Page *page, int page_num)
     // printf("No empty row found in the page.\n");
 }
 
-void find_empty_page(Table *table)
+bool find_empty_page(Table *table)
 {
     for (int i = 0; i < max_pages; i++)
     {
@@ -282,7 +290,7 @@ void find_empty_page(Table *table)
             if (!table->pages[i])
             {
                 printf("Memory allocation failed for new page.\n");
-                return;
+                return false;
             }
 
             table->pages[i]->num_rows = 0;
@@ -292,21 +300,26 @@ void find_empty_page(Table *table)
             memset(table->pages[i]->rows, 0, sizeof(Row) * rows_per_page);
             table->num_pages++;
 
-            find_empty_row(table, table->pages[i], i);
-            return;
+            return find_empty_row(table, table->pages[i], i);
         }
 
         if (table->pages[i]->num_rows < rows_per_page)
         {
-            find_empty_row(table, table->pages[i], i);
-            return;
+            return find_empty_row(table, table->pages[i], i);
         }
     }
 
     printf("No empty page found in the table.\n");
+    return false;
 }
 
 void insert(Table *table)
 {
-    find_empty_page(table);
+    tx_begin();
+    bool status = find_empty_page(table);
+    if(!status){
+        tx_abort(table);
+        return;
+    }
+    tx_commit();
 }
