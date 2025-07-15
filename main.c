@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "table.h"
+#include "wal.h"
 
 void flush_stdin() {
     int c;
@@ -85,7 +86,6 @@ int main()
                 printf("Closing database...\n");
                 table_close(table);
                 // Print cache statistics
-                cache_print_stats(&table->cache);
                 printf("Exiting\n");
                 free(table);
                 return 0;

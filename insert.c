@@ -277,6 +277,8 @@ bool find_empty_row(Table *table, Page *page, int page_num)
     //     }
     // }
     // printf("No empty row found in the page.\n");
+    printf("No empty row found in the page.\n");
+    return false;
 }
 
 bool find_empty_page(Table *table)
